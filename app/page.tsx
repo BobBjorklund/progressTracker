@@ -156,7 +156,7 @@ function migrateAgents(raw: any): Agent[] {
           text: typeof x?.text === "string" ? x.text : "",
         };
       })
-      .filter((x) => x.text.trim().length > 0);
+      .filter((x:any) => x.text.trim().length > 0);
 
     return { id, name, requirement, coachings, sides, techs, notes, followUps };
   });
