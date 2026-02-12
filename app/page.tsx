@@ -18,7 +18,6 @@ type Agent = {
   sides: SideRecord[];
   techs: TechRecord[];
 
-  // NEW
   notes: string; // sticky per agent
   followUps: FollowUpItem[]; // sticky per agent
 };
@@ -57,6 +56,9 @@ type SortKey =
  * ======================= */
 const STORAGE_KEY = "agents";
 const BACKUP_KEY = "agents_backup_pre_migration";
+
+// NEW: instructions persistence
+const INSTRUCTIONS_DISMISSED_KEY = "agent_tracker_instructions_dismissed";
 
 /** =======================
  * Small helpers
@@ -145,7 +147,6 @@ function migrateAgents(raw: any): Agent[] {
       };
     });
 
-    // NEW: sticky fields
     const notes = typeof a?.notes === "string" ? a.notes : "";
     const followUpsRaw = Array.isArray(a?.followUps) ? a.followUps : [];
     const followUps: FollowUpItem[] = followUpsRaw
@@ -156,7 +157,7 @@ function migrateAgents(raw: any): Agent[] {
           text: typeof x?.text === "string" ? x.text : "",
         };
       })
-      .filter((x:any) => x.text.trim().length > 0);
+      .filter((x: any) => x.text.trim().length > 0);
 
     return { id, name, requirement, coachings, sides, techs, notes, followUps };
   });
@@ -173,6 +174,11 @@ export default function Home() {
   const [notesModal, setNotesModal] = useState<NotesModalState>(null);
   const [followUpsModal, setFollowUpsModal] = useState<FollowUpsModalState>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
+
+  // NEW: instructions modal
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [instructionsDontShowAgain, setInstructionsDontShowAgain] = useState(false);
+  const [showDetailedBpaSteps, setShowDetailedBpaSteps] = useState(false);
 
   // compact toolbar state
   const [query, setQuery] = useState("");
@@ -233,6 +239,10 @@ export default function Home() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
       didWriteMigratedOnce.current = true;
     }
+
+    // NEW: show instructions on first load unless dismissed
+    const dismissed = localStorage.getItem(INSTRUCTIONS_DISMISSED_KEY) === "1";
+    if (!dismissed) setInstructionsOpen(true);
   }, []);
 
   /** =======================
@@ -254,6 +264,7 @@ export default function Home() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (confirm) return setConfirm(null);
+      if (instructionsOpen) return closeInstructionsModal(false);
       if (agentModal) return closeAgentModal();
       if (recordsModal) return closeRecordsModal();
       if (notesModal) return closeNotesModal();
@@ -261,7 +272,28 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirm, agentModal, recordsModal, notesModal, followUpsModal]);
+  }, [confirm, agentModal, recordsModal, notesModal, followUpsModal, instructionsOpen, instructionsDontShowAgain]);
+
+  /** =======================
+   * Instructions modal
+   * ======================= */
+  function openInstructionsModal() {
+    setInstructionsDontShowAgain(false); // don’t pre-check when opened manually
+    setShowDetailedBpaSteps(false);
+    setInstructionsOpen(true);
+  }
+
+  function closeInstructionsModal(persistDontShowAgain: boolean) {
+    if (persistDontShowAgain) {
+      localStorage.setItem(INSTRUCTIONS_DISMISSED_KEY, "1");
+    }
+    setInstructionsOpen(false);
+  }
+
+  function resetInstructionsForeverDismiss() {
+    localStorage.removeItem(INSTRUCTIONS_DISMISSED_KEY);
+    openInstructionsModal();
+  }
 
   /** =======================
    * Scoring + totals
@@ -331,7 +363,7 @@ export default function Home() {
         case "score":
           return (scoreValue(x) - scoreValue(y)) * dir;
         case "followups":
-          return (x.followUps.length - y.followUps.length) * dir;
+          return ((x.followUps?.length ?? 0) - (y.followUps?.length ?? 0)) * dir;
         default:
           return 0;
       }
@@ -645,7 +677,7 @@ export default function Home() {
 
   function saveNotesModal() {
     if (!notesModal) return;
-    const nextNotes = draftAgentNotes; // allow any text
+    const nextNotes = draftAgentNotes;
     setAgents((prev) => prev.map((a) => (a.id === notesModal.agentId ? { ...a, notes: nextNotes } : a)));
     closeNotesModal();
   }
@@ -694,9 +726,7 @@ export default function Home() {
         const nextItem: FollowUpItem = { id, text };
         return {
           ...a,
-          followUps: exists
-            ? a.followUps.map((f) => (f.id === id ? nextItem : f))
-            : [nextItem, ...a.followUps],
+          followUps: exists ? a.followUps.map((f) => (f.id === id ? nextItem : f)) : [nextItem, ...a.followUps],
         };
       })
     );
@@ -891,7 +921,6 @@ export default function Home() {
       const text = await file.text();
       const parsed = safeJsonParse(text);
 
-      // Accept either { agents: [...] } or raw [...]
       const maybeAgents = Array.isArray(parsed) ? parsed : parsed?.agents;
       const migrated = migrateAgents(maybeAgents);
 
@@ -921,6 +950,7 @@ export default function Home() {
    * ======================= */
   const options = useMemo(
     () => [
+      { name: "Instructions", onClick: openInstructionsModal, icon: "ℹ️", hint: "How to" },
       { name: "Add Agent", onClick: openAddAgent, icon: "👤", hint: "New" },
       { name: "Save", onClick: saveData, icon: "💾", hint: "Write" },
       { name: "New Month", onClick: clearRecordsKeepAgents, icon: "🧹", hint: "Wipe recs" },
@@ -966,7 +996,6 @@ export default function Home() {
             "Apple Color Emoji", "Segoe UI Emoji";
         }
 
-        /* tighter shell */
         .appShell {
           height: 100vh;
           width: 100vw;
@@ -974,7 +1003,6 @@ export default function Home() {
           grid-template-columns: 220px 1fr;
         }
 
-        /* Sidebar */
         .sidebar {
           border-right: 1px solid rgba(255, 255, 255, 0.08);
           padding: 10px;
@@ -1052,7 +1080,6 @@ export default function Home() {
           opacity: 0.7;
         }
 
-        /* Main (no page scroll) */
         .main {
           padding: 10px;
           overflow: hidden;
@@ -1069,7 +1096,6 @@ export default function Home() {
           overflow: hidden;
         }
 
-        /* Header with controls */
         .cardHeader {
           padding: 10px 10px 8px 10px;
           display: grid;
@@ -1112,7 +1138,6 @@ export default function Home() {
           color: #e5e7eb;
           padding: 0 10px;
           outline: none;
-A
           font-size: 12px;
         }
         .controlInput::placeholder {
@@ -1135,7 +1160,6 @@ A
           transform: translateY(-1px);
         }
 
-        /* Table area */
         .tableWrap {
           padding: 8px 10px 10px 10px;
           overflow: hidden;
@@ -1154,7 +1178,7 @@ A
           font-size: 11px;
           letter-spacing: 0.5px;
           text-transform: uppercase;
-          padding: 8px 6px; /* slightly tighter */
+          padding: 8px 6px;
           background: rgba(17, 24, 39, 0.75);
           border-bottom: 1px solid rgba(255, 255, 255, 0.08);
           backdrop-filter: blur(10px);
@@ -1162,7 +1186,7 @@ A
         }
 
         tbody td {
-          padding: 6px 6px; /* tighter */
+          padding: 6px 6px;
           border-bottom: 1px solid rgba(255, 255, 255, 0.055);
           vertical-align: middle;
           white-space: nowrap;
@@ -1312,7 +1336,7 @@ A
           border-radius: 999px;
           display: inline-block;
           background: rgba(255, 255, 255, 0.7);
-          box-shadow: 0 0 0 2px rgba(0,0,0,0.18);
+          box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.18);
         }
 
         .emptyState {
@@ -1364,6 +1388,7 @@ A
           font-size: 11px;
           opacity: 0.75;
           margin-top: 3px;
+          white-space: pre-wrap;
         }
         .modalClose {
           width: 34px;
@@ -1459,6 +1484,7 @@ A
           gap: 8px;
           justify-content: flex-end;
           flex-wrap: wrap;
+          align-items: center;
         }
         .btn {
           height: 36px;
@@ -1529,6 +1555,55 @@ A
           background: rgba(239, 68, 68, 0.10);
           color: #7f1d1d;
         }
+
+        /* Instruction content helpers */
+        .kicker {
+          font-size: 12px;
+          font-weight: 900;
+          margin: 0 0 6px 0;
+        }
+        .p {
+          font-size: 12px;
+          margin: 0;
+          line-height: 1.35;
+          opacity: 0.9;
+        }
+        .ul {
+          margin: 8px 0 0 18px;
+          padding: 0;
+          font-size: 12px;
+          line-height: 1.35;
+        }
+        .li {
+          margin: 6px 0;
+        }
+        .muted {
+          font-size: 11px;
+          opacity: 0.7;
+          margin-top: 8px;
+          white-space: pre-wrap;
+        }
+        .linkBtn {
+          border: none;
+          background: transparent;
+          padding: 0;
+          cursor: pointer;
+          font-weight: 900;
+          font-size: 12px;
+          color: #1d4ed8;
+          text-decoration: underline;
+        }
+        .pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid rgba(17, 24, 39, 0.14);
+          background: rgba(17, 24, 39, 0.04);
+          font-size: 11px;
+          font-weight: 900;
+        }
       `}</style>
 
       <div className="appShell">
@@ -1551,6 +1626,12 @@ A
                 </div>
               </button>
             ))}
+          </div>
+
+          <div style={{ marginTop: 10, opacity: 0.75, fontSize: 11 }}>
+            <button className="linkBtn" onClick={resetInstructionsForeverDismiss} title="Show instructions automatically again">
+              Reset instructions auto-show
+            </button>
           </div>
         </aside>
 
@@ -1675,14 +1756,12 @@ A
                           </div>
                         </td>
 
-                        {/* Notes column */}
                         <td>
                           <button className="ghostBtn" onClick={() => openNotesModal(a.id)} title="Open notes">
                             📝 Notes {hasNotes && <span className="tinyDot" />}
                           </button>
                         </td>
 
-                        {/* Follow ups column */}
                         <td>
                           <button className="ghostBtn" onClick={() => openFollowUpsModal(a.id)} title="Open follow ups">
                             ✅ {fuCount}
@@ -1730,6 +1809,174 @@ A
           </div>
         </main>
       </div>
+
+      {/* =======================
+          INSTRUCTIONS MODAL
+         ======================= */}
+      {instructionsOpen && (
+        <div className="modalOverlay" onMouseDown={() => closeInstructionsModal(false)} role="dialog" aria-modal="true">
+          <div className="modalCard" style={{ width: "min(860px, 94vw)" }} onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modalHeader">
+              <div>
+                <div className="modalTitle">How to use Agent Tracker</div>
+                <div className="modalSub">
+                  Coachings + Sides + Tech Monitors • Sticky Notes + Follow Ups • BPA Import • New Month reset
+                </div>
+              </div>
+              <button className="modalClose" onClick={() => closeInstructionsModal(false)} aria-label="Close">
+                ✕
+              </button>
+            </div>
+
+            <div className="modalBody">
+              <div className="panel">
+                <div className="panelHeader">
+                  <div className="panelTitle">Quick start</div>
+                  <span className="pill">2 minutes</span>
+                </div>
+
+                <div className="form" style={{ gap: 10 }}>
+                  <p className="p">
+                    <b>Best first-time setup:</b> import a previous month with your full team already represented, then hit{" "}
+                    <span className="pill">New Month</span> to wipe only records. Your team stays.
+                  </p>
+
+                  <ul className="ul">
+                    <li className="li">
+                      <b>Coachings</b> and <b>Sides</b>: click the number to manage history in a modal.
+                    </li>
+                    <li className="li">
+                      <b>Techs</b> = Technical Monitoring. (Calling them “Techs” or “Tech Monitors” is fine.)
+                    </li>
+                    <li className="li">
+                      <b>Notes</b>: sticky free-text per agent (whatever you want).
+                    </li>
+                    <li className="li">
+                      <b>Follow Ups</b>: sticky list per agent (editable + removable).
+                    </li>
+                    <li className="li">
+                      <b>New Month</b>: clears coachings/sides/techs only — keeps agents, requirements, notes, follow ups.
+                    </li>
+                  </ul>
+
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+                    <button className="btn btnPrimary" onClick={() => closeInstructionsModal(false)}>
+                      Got it
+                    </button>
+
+                    <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={instructionsDontShowAgain}
+                        onChange={(e) => setInstructionsDontShowAgain(e.target.checked)}
+                      />
+                      Don’t show this again
+                    </label>
+
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        closeInstructionsModal(instructionsDontShowAgain);
+                      }}
+                      title="Close (and optionally remember your choice)"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="muted">
+                    Tip: If you dismiss forever, you can still open this anytime using the sidebar{" "}
+                    <b>Instructions</b> button.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+
+              <div className="panel">
+                <div className="panelHeader">
+                  <div className="panelTitle">BPA report import</div>
+                  <span className="pill">Important</span>
+                </div>
+
+                <div className="form" style={{ gap: 10 }}>
+                  <p className="p">
+                    The BPA report often downloads <b>janky</b>. The fix is simple:
+                    <b> open it in Excel, then “Save As” a clean file named </b>
+                    <span className="pill">data.xlsx</span>, then import that file here.
+                  </p>
+
+                  <div>
+                    <button className="linkBtn" onClick={() => setShowDetailedBpaSteps((v) => !v)}>
+                      {showDetailedBpaSteps ? "Hide detailed steps" : "Show detailed steps for downloading BPA report"}
+                    </button>
+
+                    {showDetailedBpaSteps && (
+                      <div style={{ marginTop: 10 }}>
+                        <div className="kicker">Detailed BPA download steps</div>
+                        <ul className="ul">
+                          <li className="li">
+                            Navigate to{" "}
+                            <span className="pill">https://evalidateqa.bpaquality.com/Coaching/OverviewList</span>
+                          </li>
+                          <li className="li">
+                            Enter your <b>last name</b> under <b>Team Leader</b>
+                          </li>
+                          <li className="li">
+                            Press the <b>export/download</b> button on that page (the button on the upper right hand corner of the list, says "xlsx")
+                          </li>
+                          <li className="li">
+                            Save to your <b>Downloads</b> folder
+                          </li>
+                          <li className="li">
+                            Open in <b>Excel</b>
+                          </li>
+                          <li className="li">
+                            <b>Save As:</b> <span className="pill">data.xlsx</span>
+                          </li>
+                          <li className="li">
+                            Back here: click <span className="pill">Import BPA Report</span> and select <b>data.xlsx</b>
+                          </li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="muted">
+                    If the import ever reads “0 rows” or fields look wrong: it’s almost always the janky-export problem.
+                    Re-save in Excel and re-import.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+
+              <div className="panel">
+                <div className="panelHeader">
+                  <div className="panelTitle">Persistence</div>
+                  <span className="pill">Don’t lose data</span>
+                </div>
+
+                <div className="form" style={{ gap: 10 }}>
+                  <p className="p">
+                    Since cache gets cleared around here: use <span className="pill">Export JSON</span> to save a backup
+                    to disk. Later, use <span className="pill">Import JSON</span> to restore everything.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button className="btn" onClick={() => closeInstructionsModal(false)}>
+                  Close
+                </button>
+                <button className="btn btnPrimary" onClick={() => closeInstructionsModal(true)}>
+                  Close + Don’t show again
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =======================
           Agent Modal
@@ -1811,7 +2058,6 @@ A
 
             <div className="modalBody">
               <div className="twoCol">
-                {/* Form */}
                 <div className="panel">
                   <div className="panelHeader">
                     <div className="panelTitle">{editingRecordId ? "Edit" : "Add"}</div>
@@ -1854,7 +2100,6 @@ A
                   </div>
                 </div>
 
-                {/* List */}
                 <div className="panel">
                   <div className="panelHeader">
                     <div className="panelTitle">History</div>
@@ -1969,7 +2214,6 @@ A
 
             <div className="modalBody">
               <div className="twoCol">
-                {/* Form */}
                 <div className="panel">
                   <div className="panelHeader">
                     <div className="panelTitle">{editingFollowUpId ? "Edit" : "Add"}</div>
@@ -2007,7 +2251,6 @@ A
                   </div>
                 </div>
 
-                {/* List */}
                 <div className="panel">
                   <div className="panelHeader">
                     <div className="panelTitle">List</div>
